@@ -48,7 +48,7 @@ The dashboard also gives you a daily peak performance window — not just on rac
 
 ```bash
 # Clone and install
-git clone https://github.com/PonchoCodes/prform.git
+git clone https://github.com/christiancestrada-dev/prform.git
 cd prform
 npm install
 
@@ -141,37 +141,66 @@ Every night after a hard workout, your body requires additional slow-wave sleep 
 
 ### Step 3: Pre-Meet Circadian Phase Shift
 
-The human circadian rhythm can be advanced through consistent, progressively earlier bedtimes in the days before a target event. PRform implements this phase-advance protocol automatically, counting backward from meet day with multipliers scaled to race priority.
+The goal is to align your circadian performance peak with your competition start time. If your natural peak is at 3:40 PM and your meet starts at 8:00 AM, you need to advance your rhythm by approximately 7.5 hours so that peak reaction time, coordination, and endurance land at the gun — not in the afternoon.
+
+PRform computes the required total phase advance as:
 
 ```
-Days Until Race Day    A Race    B Race    C Race
-10 - 8 days           -15 min   -11 min   -8 min
-7 - 5 days            -30 min   -23 min   -15 min
-4 - 2 days            -45 min   -34 min   -23 min
-Night before          -60 min   -45 min   -30 min
+requiredAdvance = naturalPeakTime - competitionStartTime
+```
+
+This advance is distributed across the available pre-meet window, with each night's bedtime target stepping progressively earlier. The rate is capped at physiologically achievable limits: light-based phase advance produces roughly 0.5–1.5 hours of shift per day under optimal conditions (Khalsa et al., 2003). For a 7.5-hour advance with a 10-day window, that's a target rate of ~45 minutes per night — achievable with consistent morning light and evening light avoidance.
+
+The default distribution (Moderate intensity, 50% of full advance) for a 10-day window:
+
+```
+Days Until Race Day    Cumulative Advance Target (Moderate)
+10 - 8 days           ~1.5 h earlier than baseline
+7 - 5 days            ~3.0 h earlier than baseline
+4 - 2 days            ~3.8 h earlier than baseline
+Night before          ~4.0 h earlier than baseline  (≈50% of 7.5 h gap closed)
 ```
 
 If multiple meets overlap their phase-shift windows, the highest-priority meet's values are applied.
 
+### Step 3a: Shift Intensity
+
+Not every athlete wants to restructure their sleep by several hours before a meet. PRform offers three shift intensity settings, configurable per meet or as a global default.
+
+| Intensity | Fraction of Full Advance | Effect |
+|---|---|---|
+| **Gentle** | 25% | Minimal schedule disruption. Partial improvement in morning readiness. Best for C races or athletes sensitive to schedule changes. |
+| **Moderate** (default) | 50% | Balanced approach. Meaningfully closes the gap between natural peak and competition time without demanding extreme schedule changes. |
+| **Aggressive** | 100% | Maximum alignment. Targets full peak-time shift to match competition start. Requires significant schedule change; recommended only for major A races with 10+ days of lead time. |
+
+For the example above (natural peak 3:40 PM, competition 8:00 AM, 10-day window):
+
+```
+Intensity     Target Peak at Race Start    Bedtime Change (from baseline)
+Gentle        ~1:45 PM                     ~1.9 h earlier
+Moderate      ~11:50 AM                    ~3.8 h earlier
+Aggressive    ~8:00 AM                     ~7.5 h earlier
+```
+
+Shift intensity is set in the user profile and can be overridden per meet on the Meets page.
+
 ### Step 4: PRC-Based Light Prescription
 
-This is the core innovation.
+The Phase Response Curve (PRC) for light maps light exposure timing to phase shift magnitude. Light falling after the core body temperature minimum (approximately 2 hours before natural wake time) advances the rhythm — shifts it earlier. Light before the temperature minimum delays it. PRform uses the PRC to compute two time windows every day:
 
-Phase Response Curve (PRC) math tells us that light exposure produces different magnitudes of circadian phase shift depending on when it lands relative to your current sleep-wake cycle. Light in the morning (after your core body temperature minimum) advances the rhythm — shifts it earlier. Light in the evening delays it — pushes it later. PRform uses the PRC to calculate two things every day:
-
-1. **Advance window** — the time in the morning when bright light (≥10,000 lux, 15–30 min) will produce the maximum phase advance toward your target race-day peak.
-2. **Avoid window** — the evening hours when any light above ~10 lux will counteract the shift and delay your rhythm instead.
+1. **Advance window** — the morning window when 15–30 minutes of bright light (≥10,000 lux, or direct outdoor sunlight) produces the maximum advance toward the target peak time. This window shifts progressively earlier each day as the advance accumulates.
+2. **Avoid window** — the evening cutoff after which any light above ~10 lux acts as a phase-delay signal and partially undoes the day's advance.
 
 ```
-Light Prescription (example: 8-day advance toward 6:00 AM meet)
+Light Prescription (example: natural peak 3:40 PM → competition 8:00 AM, Moderate intensity)
 
-Day 8 before meet:   Advance window  06:45–07:15 AM   Avoid after 08:30 PM
-Day 5 before meet:   Advance window  06:15–06:45 AM   Avoid after 08:00 PM
-Day 2 before meet:   Advance window  05:45–06:15 AM   Avoid after 07:30 PM
-Race eve:            Advance window  05:30–06:00 AM   Avoid after 07:00 PM
+Day 10 before meet:  Advance window  07:00–07:30 AM   Avoid after 09:00 PM
+Day 7 before meet:   Advance window  06:30–07:00 AM   Avoid after 08:30 PM
+Day 4 before meet:   Advance window  06:00–06:30 AM   Avoid after 08:00 PM
+Race eve:            Advance window  05:45–06:15 AM   Avoid after 07:30 PM
 ```
 
-The advance window time shifts progressively earlier as meet day approaches, tracking the target phase advance. Both windows are stored in the `lightPrescription` field of `DailySleepPlan` and displayed on the dashboard as a daily action card.
+Each day's advance window is anchored ~30 minutes after the projected temperature minimum for that night, placing light exposure in the steepest ascending portion of the PRC where advance is maximized. Both windows are stored in the `lightPrescription` field of `DailySleepPlan` and displayed on the dashboard as a daily action card.
 
 ### Step 5: Circadian Performance Curve
 
@@ -342,6 +371,7 @@ model User {
   currentWakeTime String?   (HH:MM 24h)
   currentBedTime  String?   (HH:MM 24h)
   restedFeeling   String?   ("well" | "sometimes" | "rarely")
+  shiftIntensity  String    @default("moderate")  ("gentle" | "moderate" | "aggressive")
   onboardingDone  Boolean   @default(false)
   notifPhase1-4   Boolean   @default(true)
   workouts        Workout[]
@@ -428,7 +458,10 @@ model SleepLog {
 9. **Burgess HJ, Revell VL, Molina TA, Eastman CI.** (2010). Human phase response curves to three days of daily melatonin: 0.5 mg versus 3.0 mg. *Journal of Clinical Endocrinology and Metabolism*, 95(7), 3325–3331.
    > Supports the multi-night phase-shift strategy: circadian advancement requires 3–7 consecutive nights of shifted timing to produce measurable DLMO change. Informs the adaptive recalculation logic.
 
-10. **Burgard SA, Ailshire JA.** (2013). Gender and time for sleep among U.S. adults. *American Sociological Review*, 78(1), 51–69.
+10. **Khalsa SBS, Jewett ME, Cajochen C, Czeisler CA.** (2003). A phase response curve to single bright light pulses in human subjects. *Journal of Physiology*, 549(3), 945–952.
+    > Quantifies the magnitude of phase advance achievable from a single bright light pulse at different circadian phases. The ~0.5–1.5 h/day advance rate used in PRform's shift calculations is derived from this curve.
+
+11. **Burgard SA, Ailshire JA.** (2013). Gender and time for sleep among U.S. adults. *American Sociological Review*, 78(1), 51–69.
     > Documents the sex-based difference in sleep duration that informs the +0.5h female athlete adjustment in the base sleep need calculation.
 
 ---
